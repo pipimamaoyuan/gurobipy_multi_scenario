@@ -414,3 +414,156 @@ for s in range(m.NumScenarios):
 - 输出每个场景的最优解，直观比较不同场景下的决策差异。
 
 通过这个示例，你可以清晰看到 Gurobi 如何通过多场景功能处理不确定性，并在单一模型中同时优化多个可能的情况。
+
+
+
+
+
+
+
+以下是一份详细的 `gurobipy` 多场景优化实现指南，包含语法说明和示例代码。多场景优化主要用于处理不确定条件下的鲁棒优化问题（例如不同需求、资源波动等场景）。
+
+---
+
+### **1. 多场景优化的核心概念**
+Gurobi 的 `Multiscenario` 功能允许用户为同一模型定义多个场景（Scenario），每个场景可以有不同的参数（如目标函数系数、约束条件右侧值等）。模型会同时求解所有场景，并找到一个满足所有场景约束的鲁棒解。
+
+---
+
+### **2. 实现多场景优化的关键步骤**
+#### **2.1 创建模型并定义公共变量**
+```python
+from gurobipy import Model, GRB, quicksum
+
+# 初始化模型
+model = Model("Multiscenario_Optimization")
+```
+
+#### **2.2 定义公共变量**
+变量在所有场景中共享：
+```python
+x = model.addVar(lb=0, vtype=GRB.CONTINUOUS, name="x")
+y = model.addVar(lb=0, vtype=GRB.CONTINUOUS, name="y")
+```
+
+#### **2.3 定义公共约束**
+所有场景共享的约束（例如资源限制）：
+```python
+model.addConstr(x + y <= 100, name="shared_constraint")
+```
+
+---
+
+### **3. 定义场景特定参数**
+#### **3.1 场景参数设置**
+通过 `setParam("ScenarioNumber", n)` 设置当前场景编号 `n`，然后为每个场景定义不同的参数：
+
+```python
+# 场景 0
+model.setParam("ScenarioNumber", 0)
+model.setObjective(x + 2*y, GRB.MINIMIZE)  # 场景0的目标函数
+model.addConstr(x >= 30, name="scenario0_constraint")
+
+# 场景 1
+model.setParam("ScenarioNumber", 1)
+model.setObjective(2*x + y, GRB.MINIMIZE)  # 场景1的目标函数
+model.addConstr(y >= 40, name="scenario1_constraint")
+```
+
+#### **3.2 场景数量设置**
+```python
+model.setParam("ScenarioNumber", 2)  # 总共有2个场景
+```
+
+---
+
+### **4. 求解与结果提取**
+#### **4.1 求解模型**
+```python
+model.optimize()
+```
+
+#### **4.2 提取各场景结果**
+通过 `getScenarioResult(n)` 获取不同场景下的变量值：
+```python
+if model.status == GRB.OPTIMAL:
+    for scen in range(model.getAttr("NumScenarios")):
+        print(f"\n--- Scenario {scen} ---")
+        model.setParam("ScenarioNumber", scen)
+        print(f"x = {x.getAttr('ScenNVal')}")
+        print(f"y = {y.getAttr('ScenNVal')}")
+        print(f"Objective = {model.getAttr('ScenNObjVal')}")
+```
+
+---
+
+### **5. 完整示例代码**
+以下是一个生产计划的多场景优化示例，假设两个场景分别对应不同的市场需求：
+
+```python
+from gurobipy import Model, GRB, quicksum
+
+# 初始化模型
+model = Model("Production_Planning")
+
+# 定义变量
+prod_a = model.addVar(name="ProductA")
+prod_b = model.addVar(name="ProductB")
+
+# 公共约束：总资源限制
+model.addConstr(prod_a + 2 * prod_b <= 200, name="resource_limit")
+
+# --- 场景0：高需求场景 ---
+model.setParam("ScenarioNumber", 0)
+model.addConstr(prod_a >= 50, name="demand_A_high")
+model.addConstr(prod_b >= 30, name="demand_B_high")
+model.setObjective(10 * prod_a + 15 * prod_b, GRB.MAXIMIZE)
+
+# --- 场景1：低需求场景 ---
+model.setParam("ScenarioNumber", 1)
+model.addConstr(prod_a >= 30, name="demand_A_low")
+model.addConstr(prod_b >= 20, name="demand_B_low")
+model.setObjective(8 * prod_a + 12 * prod_b, GRB.MAXIMIZE)
+
+# 设置总场景数
+model.setParam("ScenarioNumber", 2)
+
+# 求解模型
+model.optimize()
+
+# 输出结果
+if model.status == GRB.OPTIMAL:
+    for scen in range(model.getAttr("NumScenarios")):
+        print(f"\nScenario {scen}:")
+        model.setParam("ScenarioNumber", scen)
+        print(f"ProductA = {prod_a.getAttr('ScenNVal')}")
+        print(f"ProductB = {prod_b.getAttr('ScenNVal')}")
+        print(f"Profit = {model.getAttr('ScenNObjVal')}")
+else:
+    print("Optimization failed")
+```
+
+---
+
+### **6. 关键参数说明**
+| 参数 | 说明 |
+|------|------|
+| `ScenarioNumber` | 当前正在定义的场景编号，从0开始 |
+| `NumScenarios` | 总场景数（需手动设置） |
+| `ScenNVal` | 获取变量在场景 `N` 下的值 |
+| `ScenNObjVal` | 获取场景 `N` 的目标函数值 |
+
+---
+
+### **7. 注意事项**
+1. **场景独立性**：每个场景的约束需通过 `setParam("ScenarioNumber", n)` 明确指定所属场景。
+2. **目标函数覆盖**：最后一个场景的目标函数会覆盖之前的定义，需确保每个场景的目标函数正确设置。
+3. **性能优化**：当场景数较多时，建议使用 `model.setParam("ConcurrentMIP", 8)` 并行求解。
+
+---
+
+### **8. 扩展应用**
+- **随机规划**：结合概率分布为不同场景分配权重，优化期望目标。
+- **鲁棒优化**：通过 `model.setParam("Robust", 1)` 启用鲁棒模式，寻找最坏情况下的最优解。
+
+如需进一步调试，可使用 `model.write("model.lp")` 导出模型检查场景定义是否正确。
